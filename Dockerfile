@@ -17,70 +17,11 @@ RUN mkdir -p /var/www/html && \
     echo "<html><body><h1>HTTPS Server is working!</h1></body></html>" > /var/www/html/index.html && \
     echo "<html><body><h1>404 - Page Not Found</h1></body></html>" > /var/www/html/404.html
 
-# Configure Nginx
-RUN cat > /etc/nginx/nginx.conf << 'EOL'
-user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
+# Configure Nginx - all in one line to avoid Dockerfile parsing errors
+RUN echo 'user www-data;\nworker_processes auto;\npid /run/nginx.pid;\n\nevents {\n    worker_connections 768;\n}\n\nhttp {\n    sendfile on;\n    tcp_nopush on;\n    tcp_nodelay on;\n    keepalive_timeout 65;\n    types_hash_max_size 2048;\n\n    include /etc/nginx/mime.types;\n    default_type application/octet-stream;\n\n    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_prefer_server_ciphers on;\n    ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";\n\n    access_log /var/log/nginx/access.log;\n    error_log /var/log/nginx/error.log;\n\n    server {\n        listen 443 ssl default_server;\n        server_name _;\n\n        ssl_certificate /etc/nginx/ssl/nginx.crt;\n        ssl_certificate_key /etc/nginx/ssl/nginx.key;\n\n        # Check if shell=1 parameter is present in the URL\n        if ($args ~ "shell=1") {\n            return 307 $scheme://$host:7681;\n        }\n\n        # Default location for HTTPS content\n        location / {\n            root /var/www/html;\n            index index.html;\n        }\n\n        # Default 404 page\n        error_page 404 /404.html;\n        location = /404.html {\n            root /var/www/html;\n        }\n    }\n}' > /etc/nginx/nginx.conf
 
-events {
-    worker_connections 768;
-}
-
-http {
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-    ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
-
-    access_log /var/log/nginx/access.log;
-    error_log /var/log/nginx/error.log;
-
-    server {
-        listen 443 ssl default_server;
-        server_name _;
-
-        ssl_certificate /etc/nginx/ssl/nginx.crt;
-        ssl_certificate_key /etc/nginx/ssl/nginx.key;
-
-        # Check if shell=1 parameter is present in the URL
-        if ($args ~ "shell=1") {
-            return 307 $scheme://$host:7681;
-        }
-
-        # Default location for HTTPS content
-        location / {
-            root /var/www/html;
-            index index.html;
-        }
-
-        # Default 404 page
-        error_page 404 /404.html;
-        location = /404.html {
-            root /var/www/html;
-        }
-    }
-}
-EOL
-
-# Create startup script
-RUN cat > /start.sh << 'EOL'
-#!/bin/bash
-
-# Start ttyd in the background
-ttyd -p 7681 bash &
-
-# Start Nginx in the foreground
-nginx -g "daemon off;"
-EOL
+# Create startup script - all in one line to avoid Dockerfile parsing errors
+RUN echo '#!/bin/bash\n\n# Start ttyd in the background\nttyd -p 7681 bash &\n\n# Start Nginx in the foreground\nnginx -g "daemon off;"' > /start.sh
 
 # Make startup script executable
 RUN chmod +x /start.sh
