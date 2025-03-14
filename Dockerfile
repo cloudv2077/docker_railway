@@ -17,8 +17,8 @@ RUN mkdir -p /var/www/html && \
     echo "<html><body><h1>Web Server is working!</h1></body></html>" > /var/www/html/index.html && \
     echo "<html><body><h1>404 - Page Not Found</h1></body></html>" > /var/www/html/404.html
 
-# Configure Nginx
-RUN cat > /etc/nginx/nginx.conf << 'EOF'
+# Configure Nginx - fixing the heredoc syntax
+RUN bash -c 'cat > /etc/nginx/nginx.conf << "EOF"
 user www-data;
 worker_processes auto;
 pid /run/nginx.pid;
@@ -124,10 +124,10 @@ http {
         }
     }
 }
-EOF
+EOF'
 
 # Create startup script that correctly starts ttyd
-RUN cat > /start.sh << 'EOF'
+RUN bash -c 'cat > /start.sh << "EOF"
 #!/bin/bash
 
 # Start ttyd with a shell command in the background
@@ -140,13 +140,13 @@ sleep 3
 
 # Check if ttyd is running
 if ! ps -p $TTYD_PID > /dev/null; then
-  echo "ttyd failed to start with 'bash'. Trying with full path '/bin/bash'..."
+  echo "ttyd failed to start with '\''bash'\''. Trying with full path '\''/bin/bash'\''..."
   ttyd -p 7681 /bin/bash &
   TTYD_PID=$!
   sleep 3
   
   if ! ps -p $TTYD_PID > /dev/null; then
-    echo "Failed to start ttyd with '/bin/bash'. Trying with 'sh'..."
+    echo "Failed to start ttyd with '\''/bin/bash'\''. Trying with '\''sh'\''..."
     ttyd -p 7681 sh &
     TTYD_PID=$!
     sleep 3
@@ -171,7 +171,7 @@ fi
 # Start Nginx in the foreground
 echo "Starting Nginx..."
 nginx -g "daemon off;"
-EOF
+EOF'
 
 # Make startup script executable
 RUN chmod +x /start.sh
