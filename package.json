@@ -1,0 +1,13 @@
+{
+  "name": "ttyd-node-proxy",
+  "version": "1.0.0",
+  "description": "Node.js proxy for ttyd",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.18.2",
+    "http-proxy": "^1.18.1",
+    "https": "^1.0.0",
+    "fs": "0.0.1-security",
+    "path": "^0.12.7"
+  }
+}
