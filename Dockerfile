@@ -1,133 +1,142 @@
 FROM tsl0922/ttyd:latest
 
-# Install Nginx for reverse proxy
+# Install Node.js
 RUN apt-get update && \
-    apt-get install -y nginx openssl procps && \
+    apt-get install -y curl procps && \
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-
-# Create self-signed SSL certificate
-RUN mkdir -p /etc/nginx/ssl && \
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout /etc/nginx/ssl/nginx.key -out /etc/nginx/ssl/nginx.crt \
-    -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
 
 # Create default web pages
 RUN mkdir -p /var/www/html && \
     echo "<html><body><h1>Web Server is working!</h1></body></html>" > /var/www/html/index.html && \
     echo "<html><body><h1>404 - Page Not Found</h1></body></html>" > /var/www/html/404.html
 
-# Configure Nginx - fixing the heredoc syntax
-RUN bash -c 'cat > /etc/nginx/nginx.conf << "EOF"
-user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
+# Create Node.js proxy server script
+RUN mkdir -p /app
+WORKDIR /app
 
-events {
-    worker_connections 768;
+# Create package.json
+RUN echo '{ \
+  "name": "ttyd-node-proxy", \
+  "version": "1.0.0", \
+  "description": "Node.js proxy for ttyd", \
+  "main": "server.js", \
+  "dependencies": { \
+    "express": "^4.18.2", \
+    "http-proxy": "^1.18.1", \
+    "https": "^1.0.0", \
+    "fs": "0.0.1-security", \
+    "path": "^0.12.7" \
+  } \
+}' > package.json
+
+# Install dependencies
+RUN npm install
+
+# Create self-signed SSL certificate
+RUN apt-get update && \
+    apt-get install -y openssl && \
+    mkdir -p /app/ssl && \
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /app/ssl/server.key -out /app/ssl/server.crt \
+    -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost" && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create Node.js server script
+RUN cat > /app/server.js << 'EOF'
+const express = require('express');
+const httpProxy = require('http-proxy');
+const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+// Create Express app
+const app = express();
+const proxy = httpProxy.createProxyServer({ ws: true });
+
+// SSL config
+const sslOptions = {
+  key: fs.readFileSync('/app/ssl/server.key'),
+  cert: fs.readFileSync('/app/ssl/server.crt')
+};
+
+// Serve static files
+app.use(express.static('/var/www/html'));
+
+// Handle WebSocket upgrade
+function setupWebSocketProxy(server) {
+  server.on('upgrade', (req, socket, head) => {
+    const parsedUrl = new URL(req.url, 'http://localhost');
+    
+    if (parsedUrl.pathname.startsWith('/ttyd') || req.url.includes('/ttyd')) {
+      proxy.ws(req, socket, head, { 
+        target: 'http://localhost:7681',
+        ws: true
+      });
+    }
+  });
 }
 
-http {
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
+// Middleware to check if shell=1 parameter is present
+app.use((req, res, next) => {
+  if (req.query.shell === '1') {
+    // Redirect to ttyd
+    return proxy.web(req, res, { 
+      target: 'http://localhost:7681',
+      ignorePath: true,
+      changeOrigin: true
+    });
+  }
+  
+  // For the dedicated ttyd path
+  if (req.path.startsWith('/ttyd')) {
+    return proxy.web(req, res, { 
+      target: 'http://localhost:7681',
+      changeOrigin: true
+    });
+  }
+  
+  next();
+});
 
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
+// 404 handler
+app.use((req, res) => {
+  res.status(404).sendFile(path.join('/var/www/html', '404.html'));
+});
 
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-    ssl_ciphers "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
+// Handle proxy errors
+proxy.on('error', (err, req, res) => {
+  console.error('Proxy error:', err);
+  res.writeHead(500, { 'Content-Type': 'text/plain' });
+  res.end('Proxy error');
+});
 
-    map $args $is_shell {
-        default 0;
-        ~*shell=1 1;
-    }
+// Create HTTP and HTTPS servers
+const httpServer = http.createServer(app);
+const httpsServer = https.createServer(sslOptions, app);
 
-    access_log /var/log/nginx/access.log;
-    error_log /var/log/nginx/error.log debug;
+// Setup WebSocket proxying for both servers
+setupWebSocketProxy(httpServer);
+setupWebSocketProxy(httpsServer);
 
-    # HTTP Server
-    server {
-        listen 80 default_server;
-        server_name _;
+// Start servers
+httpServer.listen(80, () => {
+  console.log('HTTP Server running on port 80');
+});
 
-        # Proxy to ttyd for shell=1 requests
-        location / {
-            # Use map variable for conditional processing
-            if ($is_shell = 1) {
-                rewrite ^(.*)$ /ttyd last;
-            }
-            
-            # Default content
-            root /var/www/html;
-            index index.html;
-        }
+httpsServer.listen(443, () => {
+  console.log('HTTPS Server running on port 443');
+});
 
-        # Dedicated location for ttyd proxy
-        location /ttyd {
-            proxy_pass http://127.0.0.1:7681;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Host $host;
-            proxy_read_timeout 1800s;
-            proxy_send_timeout 1800s;
-            proxy_buffering off;
-        }
+console.log('Node.js proxy server started');
+EOF
 
-        # Default 404 page
-        error_page 404 /404.html;
-        location = /404.html {
-            root /var/www/html;
-        }
-    }
-
-    # HTTPS Server
-    server {
-        listen 443 ssl default_server;
-        server_name _;
-
-        ssl_certificate /etc/nginx/ssl/nginx.crt;
-        ssl_certificate_key /etc/nginx/ssl/nginx.key;
-
-        # Proxy to ttyd for shell=1 requests
-        location / {
-            # Use map variable for conditional processing
-            if ($is_shell = 1) {
-                rewrite ^(.*)$ /ttyd last;
-            }
-            
-            # Default content
-            root /var/www/html;
-            index index.html;
-        }
-
-        # Dedicated location for ttyd proxy
-        location /ttyd {
-            proxy_pass http://127.0.0.1:7681;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Host $host;
-            proxy_read_timeout 1800s;
-            proxy_send_timeout 1800s;
-            proxy_buffering off;
-        }
-
-        # Default 404 page
-        error_page 404 /404.html;
-        location = /404.html {
-            root /var/www/html;
-        }
-    }
-}
-EOF'
-
-# Create startup script that correctly starts ttyd
-RUN bash -c 'cat > /start.sh << "EOF"
+# Create startup script
+RUN cat > /start.sh << 'EOF'
 #!/bin/bash
 
 # Start ttyd with a shell command in the background
@@ -140,13 +149,13 @@ sleep 3
 
 # Check if ttyd is running
 if ! ps -p $TTYD_PID > /dev/null; then
-  echo "ttyd failed to start with '\''bash'\''. Trying with full path '\''/bin/bash'\''..."
+  echo "ttyd failed to start with 'bash'. Trying with full path '/bin/bash'..."
   ttyd -p 7681 /bin/bash &
   TTYD_PID=$!
   sleep 3
   
   if ! ps -p $TTYD_PID > /dev/null; then
-    echo "Failed to start ttyd with '\''/bin/bash'\''. Trying with '\''sh'\''..."
+    echo "Failed to start ttyd with '/bin/bash'. Trying with 'sh'..."
     ttyd -p 7681 sh &
     TTYD_PID=$!
     sleep 3
@@ -168,10 +177,10 @@ else
   echo "Warning: ttyd might not be responding correctly"
 fi
 
-# Start Nginx in the foreground
-echo "Starting Nginx..."
-nginx -g "daemon off;"
-EOF'
+# Start Node.js proxy server in the foreground
+echo "Starting Node.js proxy server..."
+cd /app && node server.js
+EOF
 
 # Make startup script executable
 RUN chmod +x /start.sh
