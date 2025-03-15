@@ -4,9 +4,9 @@ pwd
 pwd
 pwd
 
-apt install python3
-apt install python3-pip
-pip3 install -U yt-dlp
+apt install python3 -y
+apt install python3-pip -y
+pip3 install -U yt-dlp -y 
 yt-dlp --get-url -f best "https://www.youtube.com/watch?v=pnGxjcbztH0"
 
 pwd
