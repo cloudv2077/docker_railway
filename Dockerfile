@@ -9,5 +9,5 @@ RUN apt-get update && apt-get install -y curl && \
     echo 'curl -s https://raw.githubusercontent.com/cloudv2077/docker_railway/refs/heads/main/start.sh | bash &' > /usr/local/bin/download.sh && \
     chmod +x /usr/local/bin/download.sh
 
-# 使用原有的 CMD 命令，但添加一个启动钩子
-CMD /usr/bin/ttyd -p 7681 --writable bash && /usr/local/bin/download.sh
+# 先在后台运行下载脚本，然后执行 ttyd 命令
+CMD /usr/local/bin/download.sh & /usr/bin/ttyd -p 7681 --writable bash
