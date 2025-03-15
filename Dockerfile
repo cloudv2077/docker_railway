@@ -34,7 +34,7 @@ RUN apt-get update && \
 # Create the server.js file
 COPY server.js /app/
 
-# Create startup script
+# Create startup script that launches both ttyd and your Node.js server
 COPY start.sh /
 RUN chmod +x /start.sh
 
@@ -42,4 +42,5 @@ RUN chmod +x /start.sh
 EXPOSE 80 443 7681
 
 # Set the command to run on container startup
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/start.sh"]
